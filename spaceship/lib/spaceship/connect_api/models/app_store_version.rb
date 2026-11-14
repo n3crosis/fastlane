@@ -183,6 +183,9 @@ module Spaceship
       def fetch_app_store_review_detail(client: nil, includes: "appStoreReviewAttachments")
         client ||= Spaceship::ConnectAPI
         resp = client.get_app_store_review_detail(app_store_version_id: id, includes: includes)
+        # A new version can have no review information yet.
+        return nil if (200...300).cover?(resp.status) && resp.body&.key?("data") && resp.body["data"].nil?
+
         return resp.to_models.first
       end
 

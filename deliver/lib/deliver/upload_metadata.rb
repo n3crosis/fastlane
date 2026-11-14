@@ -690,12 +690,7 @@ module Deliver
       end
 
       UI.message("Uploading app review information to App Store Connect")
-      app_store_review_detail = begin
-                                  version.fetch_app_store_review_detail
-                                rescue => error
-                                  UI.error("Error fetching app store review detail - #{error.message}")
-                                  nil
-                                end # errors if doesn't exist
+      app_store_review_detail = version.fetch_app_store_review_detail
       if app_store_review_detail
         app_store_review_detail.update(attributes: attributes)
       else
@@ -747,6 +742,11 @@ module Deliver
 
     def review_attachment_file(version)
       app_store_review_detail = version.fetch_app_store_review_detail
+      unless app_store_review_detail
+        return unless options[:app_review_attachment_file]
+
+        UI.user_error!("Cannot upload an app review attachment without app review information. Set `app_review_information` or add review information in App Store Connect first.")
+      end
       app_store_review_attachments = app_store_review_detail.app_store_review_attachments || []
 
       if options[:app_review_attachment_file]

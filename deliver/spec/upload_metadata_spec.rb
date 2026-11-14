@@ -121,6 +121,31 @@ describe Deliver::UploadMetadata do
     let(:app_store_review_detail) { double("app_store_review_detail") }
     let(:uploader) { Deliver::UploadMetadata.new(options) }
 
+    context "when fetching review details fails" do
+      let(:app_review_information) { { notes: "Review notes" } }
+
+      it "does not replace an authorization failure with a create request" do
+        error = Spaceship::UnauthorizedAccessError.new("Request failed")
+        expect(version).to receive(:fetch_app_store_review_detail).and_raise(error)
+        expect(version).not_to receive(:create_app_store_review_detail)
+
+        expect { uploader.send("review_information", version) }.to raise_error { |raised| expect(raised).to equal(error) }
+      end
+    end
+
+    context "when review details are absent" do
+      let(:app_review_information) { { notes: "Review notes" } }
+
+      it "creates the supplied review information" do
+        expect(version).to receive(:fetch_app_store_review_detail).and_return(nil)
+        expect(version).to receive(:create_app_store_review_detail).with(attributes: {
+          "notes" => "Review notes", "demo_account_required" => false
+        })
+
+        uploader.send("review_information", version)
+      end
+    end
+
     context "with review_information" do
       let(:app_review_information) do
         { first_name: "Alice",
@@ -199,6 +224,41 @@ describe Deliver::UploadMetadata do
           uploader.send("review_information", version)
         end
       end
+    end
+  end
+
+  describe "#review_attachment_file" do
+    let(:options) { {} }
+    let(:uploader) { Deliver::UploadMetadata.new(options) }
+    let(:version) { double("version") }
+    let(:attachment) { double("attachment") }
+    let(:review_detail) { instance_double(Spaceship::ConnectAPI::AppStoreReviewDetail, app_store_review_attachments: [attachment]) }
+
+    it "explains missing review information when an attachment is requested" do
+      options[:app_review_attachment_file] = "review.pdf"
+      expect(version).to receive(:fetch_app_store_review_detail).and_return(nil)
+      expect(version).not_to receive(:create_app_store_review_detail)
+
+      expect { uploader.send("review_attachment_file", version) }.to raise_error(
+        FastlaneCore::Interface::FastlaneError, /Set `app_review_information`/
+      )
+    end
+
+    it "keeps removing existing attachments when no file is supplied" do
+      expect(version).to receive(:fetch_app_store_review_detail).and_return(review_detail)
+      expect(attachment).to receive(:delete!)
+      expect(review_detail).not_to receive(:upload_attachment)
+
+      uploader.send("review_attachment_file", version)
+    end
+
+    it "replaces existing attachments with the supplied file" do
+      options[:app_review_attachment_file] = "review.pdf"
+      expect(version).to receive(:fetch_app_store_review_detail).and_return(review_detail)
+      expect(attachment).to receive(:delete!).ordered
+      expect(review_detail).to receive(:upload_attachment).with(path: "review.pdf").ordered
+
+      uploader.send("review_attachment_file", version)
     end
   end
 
@@ -347,6 +407,23 @@ describe Deliver::UploadMetadata do
           })
 
           # Update app info
+          expect(app_info).to receive(:update_categories).with(category_id_map: {})
+
+          uploader.upload
+        end
+
+        it "continues uploading metadata when review details are absent" do
+          options[:platform] = "ios"
+          options[:metadata_path] = metadata_path
+          options[:copyright] = "Example"
+          options[:version_check_wait_retry_limit] = 5
+
+          allow(uploader).to receive(:review_information).and_call_original
+          allow(uploader).to receive(:review_attachment_file).and_call_original
+          expect(version).to receive(:fetch_app_store_review_detail).and_return(nil)
+          expect(version).not_to receive(:create_app_store_review_detail)
+          expect(Spaceship::ConnectAPI).to receive(:get_app_store_versions).and_return(app_store_versions)
+          expect(version).to receive(:update).with(attributes: { "copyright" => "Example" })
           expect(app_info).to receive(:update_categories).with(category_id_map: {})
 
           uploader.upload
